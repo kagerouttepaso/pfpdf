@@ -275,6 +275,48 @@ test('Mermaid defaults to ELK and a diagram config selects another layout', asyn
   assert.match(byDefault, />二行目</);
 });
 
+test('Mermaid ELK preserves subgraph IDs that overlap Object prototype properties', async () => {
+  for (const id of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+    const content = [
+      '```mermaid', 'flowchart LR',
+      `  subgraph ${id}["初期化"]`,
+      '    A["入力"] --> B["処理"]',
+      '  end',
+      `  ${id} --> C["出力"]`,
+      `  style ${id} fill:#abcdef`,
+      '```',
+    ].join('\n');
+    const build = () => buildDocumentBody([src(content)], new ResourceManifest(), [], { warn: noop });
+    const first = await build();
+    assert.deepEqual((await build()).generatedFiles, first.generatedFiles);
+    const svg = first.generatedFiles[0]![1];
+    for (const label of ['初期化', '入力', '処理', '出力']) assert.ok(svg.includes(label), `${id}: ${label}`);
+    assert.match(svg, /fill:#abcdef/);
+    assert.equal((svg.match(/class="[^"]*flowchart-link/g) ?? []).length, 2, id);
+    assert.doesNotMatch(svg, /NaN|undefined/);
+  }
+});
+
+test('Mermaid ELK keeps nested groups and similarly named nodes distinct', async () => {
+  const content = [
+    '```mermaid', 'flowchart LR',
+    '  subgraph constructor["外側"]',
+    '    subgraph toString["内側"]',
+    '      A["入力"] --> B["処理"]',
+    '    end',
+    '  end',
+    '  pfpdf-elk-node-1["既存ノード"] --> toString',
+    '  constructor --> pfpdf-elk-node-1',
+    '```',
+  ].join('\n');
+  const body = await buildDocumentBody([src(content)], new ResourceManifest(), [], { warn: noop });
+  const svg = body.generatedFiles[0]![1];
+  for (const label of ['外側', '内側', '入力', '処理', '既存ノード']) assert.ok(svg.includes(label), label);
+  assert.equal((svg.match(/class="cluster"/g) ?? []).length, 2);
+  assert.equal((svg.match(/class="[^"]*flowchart-link/g) ?? []).length, 3);
+  assert.doesNotMatch(svg, /NaN|undefined/);
+});
+
 test('non-Mermaid code blocks are unaffected', async () => {
   const html = await render('```text\nflowchart LR\n  A --> B\n```\n');
   assert.match(html, /<pre><code class="language-text hljs">/);

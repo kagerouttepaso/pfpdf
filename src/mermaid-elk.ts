@@ -10,6 +10,7 @@
 import elkLayouts from '@mermaid-js/layout-elk';
 import { JSDOM } from 'jsdom';
 import type MermaidRuntime from 'isomorphic-mermaid';
+import type { LayoutData } from 'mermaid';
 
 type LayoutLoader = Parameters<typeof MermaidRuntime.registerLayoutLoaders>[0][number];
 
@@ -17,6 +18,43 @@ type LayoutLoader = Parameters<typeof MermaidRuntime.registerLayoutLoaders>[0][n
 const ELK_WINDOW_GLOBALS = ['Error', 'Math', 'Object', 'Array', 'String', 'Number', 'Date', 'JSON', 'RegExp'];
 
 let parserWindow: unknown;
+
+/**
+ * ELK's adapter indexes nodes with plain objects. Inherited keys such as
+ * `constructor` otherwise collide with its subgraph child arrays. Rename only
+ * those layout IDs, preserving labels, DOM IDs, styles, and source text.
+ */
+function escapeElkIds(data: LayoutData): LayoutData {
+  const used = new Set(data.nodes.map((node) => node.id));
+  const replacements = new Map<string, string>();
+  let index = 0;
+  for (const id of used) {
+    if (!Object.hasOwn(Object.prototype, id)) continue;
+    let replacement: string;
+    do {
+      replacement = `pfpdf-elk-node-${++index}`;
+    } while (used.has(replacement));
+    replacements.set(id, replacement);
+    used.add(replacement);
+  }
+  if (replacements.size === 0) return data;
+
+  const replace = (id: string): string => replacements.get(id) ?? id;
+  return {
+    ...data,
+    nodes: data.nodes.map((node) => ({
+      ...node,
+      id: replace(node.id),
+      ...(node.parentId === undefined ? {} : { parentId: replace(node.parentId) }),
+    })),
+    edges: data.edges.map((edge) => ({
+      ...edge,
+      ...(edge.start === undefined ? {} : { start: replace(edge.start) }),
+      ...(edge.end === undefined ? {} : { end: replace(edge.end) }),
+      ...(edge.parentId === undefined ? {} : { parentId: replace(edge.parentId) }),
+    })),
+  };
+}
 
 /**
  * @mermaid-js/layout-elk bundles its own Mermaid rendering code, including a
@@ -33,7 +71,10 @@ function withParserWindow(load: LayoutLoader['loader']): LayoutLoader['loader'] 
     parserWindow ??= new JSDOM('').window;
     scope.window = parserWindow;
     try {
-      return await load();
+      const renderer = await load();
+      return {
+        render: (data, ...args) => renderer.render(escapeElkIds(data), ...args),
+      };
     } finally {
       scope.window = svgWindow;
     }
