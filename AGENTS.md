@@ -28,6 +28,16 @@ design docs, not here.
   (with the English translation), including rejected alternatives and reasons.
   Do not rely on commit messages or issues as the only record.
 
+## Commits and pull requests
+
+- Commit messages and pull request titles must follow Conventional Commits:
+  `<type>[optional scope][!]: <description>` (for example,
+  `fix(markdown): accept longer underscore page breaks`).
+- Pull request descriptions must include English first, followed by a Japanese
+  translation of the same content, including validation results. Do not add
+  language headings; separate the two versions with a `-----` line, with a
+  blank line before and after it.
+
 ## Code rules
 
 - Implementation language is TypeScript under `src/`; compiled output is what
