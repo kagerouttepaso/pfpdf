@@ -4,20 +4,23 @@
  * svgdom measures SVG text with fontkit, but it ships only Open Sans and maps
  * one font file per family. Japanese labels therefore fall back to the Open
  * Sans .notdef advance and the layout reserves too little width. The bundled
- * Noto Sans JP comes as @fontsource unicode-range subsets, so this module
- * exposes them to svgdom as one fontkit-compatible font that picks the subset
- * per code point. It reads only bundled files: the layout stays deterministic
- * and independent of host fonts and browsers (DD-28).
+ * Noto Sans JP ships as unicode-range subsets in `resources/fonts`, so this
+ * module exposes them to svgdom as one fontkit-compatible font that picks the
+ * subset per code point. It reads only shipped files: the layout stays
+ * deterministic and independent of host fonts and browsers (DD-28).
  */
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { openSync, type Font } from 'fontkit';
 import { Element, SVGGraphicsElement, getFonts, setFontFamilyMappings } from 'svgdom';
 import { RuntimeError } from './errors.js';
+import { resourcePath } from './template.js';
 
 /** Family name used for both Mermaid layout and the generated SVG. */
 export const MERMAID_MEASURE_FAMILY = 'Noto Sans JP';
+
+/** Shipped @font-face list for the measurement font (scripts/copy-resources.mjs). */
+const MEASURE_CSS = 'noto-sans-jp-400.css';
 
 interface Subset {
   file: string;
@@ -97,14 +100,26 @@ function parseRanges(value: string): Array<[number, number]> {
   });
 }
 
+/**
+ * Reads the subsets from the shipped `resources/fonts` CSS rather than from
+ * @fontsource, which is a build-time dependency only.
+ */
 function loadSubsetFont(): SubsetFont {
-  const require = createRequire(import.meta.url);
-  const packageDir = path.dirname(require.resolve('@fontsource/noto-sans-jp/package.json'));
-  const unicode = JSON.parse(fs.readFileSync(path.join(packageDir, 'unicode.json'), 'utf8')) as Record<string, string>;
-  const subsets: Subset[] = Object.entries(unicode).map(([key, ranges]) => ({
-    file: path.join(packageDir, 'files', `noto-sans-jp-${key.replace(/^\[(\d+)\]$/, '$1')}-400-normal.woff2`),
-    ranges: parseRanges(ranges),
-  }));
+  const fontsDir = resourcePath('fonts');
+  const cssFile = path.join(fontsDir, MEASURE_CSS);
+  let css: string;
+  try {
+    css = fs.readFileSync(cssFile, 'utf8');
+  } catch (e) {
+    throw new RuntimeError(`bundled Mermaid font resource is missing: ${cssFile}: ${(e as Error).message}`);
+  }
+  const subsets: Subset[] = [];
+  for (const [face] of css.matchAll(/@font-face\s*\{[^}]*\}/g)) {
+    const url = /src:\s*url\(([^)]+\.woff2)\)/.exec(face)?.[1];
+    const ranges = /unicode-range:\s*([^;]+);/.exec(face)?.[1];
+    if (url === undefined || ranges === undefined) continue;
+    subsets.push({ file: path.join(fontsDir, url.replace(/^['"]|['"]$/g, '')), ranges: parseRanges(ranges) });
+  }
   const latin = subsets.find((subset) => subset.file.endsWith('-latin-400-normal.woff2'));
   if (latin === undefined) throw new RuntimeError('bundled Mermaid font has no latin subset');
   latin.font = openFont(latin.file);
